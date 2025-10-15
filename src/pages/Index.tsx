@@ -1,141 +1,104 @@
-import { useState, useEffect } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Sparkles, RefreshCw, Upload, Link, Monitor } from 'lucide-react';
-import { UploadZone } from '@/components/UploadZone';
-import { URLInput } from '@/components/URLInput';
-import { ScreenPicker } from '@/components/ScreenPicker';
-import { OCRResults } from '@/components/OCRResults';
-import { useMutation } from '@tanstack/react-query';
-import { toast } from 'sonner';
+// src/pages/Index.tsx
+import { useEffect, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
 
-interface OCRResponse {
-  text: string;
-  avg_conf?: number;
-  boxes?: Array<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    word: string;
-    conf?: number;
-  }>;
-  raw?: any;
-}
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+
+import { Sparkles, RefreshCw, Upload, Link, Monitor } from "lucide-react";
+import { UploadZone } from "@/components/UploadZone";
+import { URLInput } from "@/components/URLInput";
+import { ScreenPicker } from "@/components/ScreenPicker";
+import { OCRResults } from "@/components/OCRResults";
+
+import { runOCRFile, runOCRUrl, type OcrResp } from "@/lib/api";
 
 const Index = () => {
+  // inputs/state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [language, setLanguage] = useState('en');
-  const [showOverlay, setShowOverlay] = useState(true);
-  const [activeTab, setActiveTab] = useState('upload');
+  const [activeTab, setActiveTab] = useState<"upload" | "url" | "screen">("upload");
 
-  const ocrMutation = useMutation({
-    mutationFn: async ({ file, url }: { file?: File; url?: string }) => {
-      const apiUrl = import.meta.env.VITE_OCR_API || 'http://localhost:8000';
-      const endpoint = `${apiUrl}/ocr/handwriting`;
-      
-      let response: Response;
-      
-      if (file) {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('language', language);
-        formData.append('overlay', showOverlay.toString());
-        
-        response = await fetch(endpoint, {
-          method: 'POST',
-          body: formData,
-        });
-      } else if (url) {
-        response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            url,
-            language,
-            overlay: showOverlay,
-          }),
-        });
-      } else {
-        throw new Error('No file or URL provided');
-      }
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'OCR processing failed');
-      }
-      
-      return response.json() as Promise<OCRResponse>;
+  // settings
+  // NOTE: use OCR.space language codes (eng, spa, fra, deu, zho, jpn)
+  const [language, setLanguage] = useState<string>("eng");
+  const [showOverlay, setShowOverlay] = useState<boolean>(true);
+
+  // OCR mutation using centralized api.ts helpers
+  const ocrMutation = useMutation<OcrResp, Error, { file?: File; url?: string }>({
+    mutationFn: async ({ file, url }) => {
+      if (file) return runOCRFile(file, language, showOverlay);
+      if (url) return runOCRUrl(url, language, showOverlay);
+      throw new Error("No file or URL provided");
     },
-    onSuccess: () => {
-      toast.success('OCR processing completed!');
-    },
-    onError: (error: Error) => {
-      toast.error(error.message);
-    },
+    onSuccess: () => toast.success("OCR processing completed!"),
+    onError: (err) => toast.error(err.message || "OCR request failed"),
   });
 
+  // handlers
   const handleFileSelected = (file: File) => {
     setSelectedFile(file);
+    if (preview) URL.revokeObjectURL(preview);
     const url = URL.createObjectURL(file);
     setPreview(url);
-    setImageUrl(url);
+    setImageUrl(url); // so OCRResults can preview even for uploads
+    setActiveTab("upload");
   };
 
   const handleURLSubmit = (url: string) => {
-    setImageUrl(url);
+    setSelectedFile(null);
+    if (preview) URL.revokeObjectURL(preview);
     setPreview(url);
+    setImageUrl(url);
+    setActiveTab("url");
   };
 
+  // ScreenPicker provides a Blob of the cropped region
   const handleScreenCapture = (blob: Blob) => {
-    const file = new File([blob], 'screen-capture.png', { type: 'image/png' });
+    const file = new File([blob], "screen-capture.png", { type: "image/png" });
     handleFileSelected(file);
-    setActiveTab('upload');
-    toast.success('Screen region captured!');
+    setActiveTab("upload");
+    toast.success("Screen region captured!");
   };
 
   const handleRunOCR = () => {
-    if (activeTab === 'upload' && selectedFile) {
+    if (activeTab === "upload" && selectedFile) {
       ocrMutation.mutate({ file: selectedFile });
-    } else if ((activeTab === 'url' || activeTab === 'screen') && imageUrl) {
+    } else if ((activeTab === "url" || activeTab === "screen") && imageUrl) {
       ocrMutation.mutate({ url: imageUrl });
     } else {
-      toast.error('Please provide an image first');
+      toast.error("Please provide an image first");
     }
   };
 
   const handleReset = () => {
     setSelectedFile(null);
+    if (preview) URL.revokeObjectURL(preview);
     setPreview(null);
     setImageUrl(null);
     ocrMutation.reset();
-    
-    if (preview) {
-      URL.revokeObjectURL(preview);
-    }
   };
 
+  // keyboard shortcuts
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
         handleRunOCR();
-      } else if (e.key === 'Escape') {
+      } else if (e.key === "Escape") {
         handleReset();
       }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedFile, imageUrl, activeTab]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFile, imageUrl, activeTab, language, showOverlay]);
 
   return (
     <div className="min-h-screen bg-gradient-bg">
@@ -158,13 +121,13 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main */}
       <main className="container mx-auto px-4 py-8 max-w-5xl">
         <div className="grid lg:grid-cols-[1fr,380px] gap-6">
-          {/* Left Column - Input */}
+          {/* Left column */}
           <div className="space-y-6">
             <Card className="p-6 shadow-medium">
-              <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="upload" className="gap-2">
                     <Upload className="h-4 w-4" />
@@ -190,10 +153,12 @@ const Index = () => {
                   </TabsContent>
 
                   <TabsContent value="url" className="mt-0">
+                    {/* Ensure your URLInput calls onURLSubmit(url: string) */}
                     <URLInput onURLSubmit={handleURLSubmit} />
                   </TabsContent>
 
                   <TabsContent value="screen" className="mt-0">
+                    {/* Ensure your ScreenPicker calls onImageCaptured(blob: Blob) */}
                     <ScreenPicker onImageCaptured={handleScreenCapture} />
                   </TabsContent>
                 </div>
@@ -212,12 +177,12 @@ const Index = () => {
             )}
           </div>
 
-          {/* Right Column - Controls */}
+          {/* Right column - controls */}
           <div className="space-y-4">
             <Card className="p-6 space-y-6 shadow-medium sticky top-24">
               <div>
                 <h3 className="text-sm font-medium mb-3">Settings</h3>
-                
+
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="language">Language</Label>
@@ -226,12 +191,13 @@ const Index = () => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="en">English</SelectItem>
-                        <SelectItem value="es">Spanish</SelectItem>
-                        <SelectItem value="fr">French</SelectItem>
-                        <SelectItem value="de">German</SelectItem>
-                        <SelectItem value="zh">Chinese</SelectItem>
-                        <SelectItem value="ja">Japanese</SelectItem>
+                        {/* OCR.space codes */}
+                        <SelectItem value="eng">English</SelectItem>
+                        <SelectItem value="spa">Spanish</SelectItem>
+                        <SelectItem value="fra">French</SelectItem>
+                        <SelectItem value="deu">German</SelectItem>
+                        <SelectItem value="zho">Chinese</SelectItem>
+                        <SelectItem value="jpn">Japanese</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -257,7 +223,7 @@ const Index = () => {
                   size="lg"
                 >
                   <Sparkles className="mr-2 h-4 w-4" />
-                  {ocrMutation.isPending ? 'Processing...' : 'Run OCR'}
+                  {ocrMutation.isPending ? "Processing..." : "Run OCR"}
                 </Button>
 
                 <Button
